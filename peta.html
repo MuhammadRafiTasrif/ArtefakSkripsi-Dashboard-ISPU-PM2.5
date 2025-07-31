@@ -1,0 +1,1582 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta
+      name="viewport"
+      content="initial-scale=1,user-scalable=no,maximum-scale=1,width=device-width"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <link rel="stylesheet" href="assets/css/leaflet.css" />
+    <link rel="stylesheet" href="assets/css/L.Control.Layers.Tree.css" />
+    <link rel="stylesheet" href="assets/css/qgis2web.css" />
+    <link rel="stylesheet" href="assets/css/fontawesome-all.min.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css"
+    />
+
+    <style>
+      html,
+      body,
+      #map {
+        width: 100%;
+        height: 100%;
+        padding: 0;
+        margin: 0;
+      }
+    </style>
+    <title>
+      Peta Estimasi Indeks Standar Pencemar Udara PM2.5 (Maret 2025) Studi Kasus
+      Pulau Jawa
+    </title>
+  </head>
+  <body>
+    <!-- Tombol di pojok kiri atas -->
+    <div style="position: fixed; top: 20px; left: 80px; z-index: 1000">
+      <button
+        onclick="window.location.href='index.html'"
+        style="
+          padding: 8px 12px;
+          border: none;
+          border-radius: 6px;
+          background-color: #007bff;
+          color: white;
+          cursor: pointer;
+        "
+      >
+        <i class="bi bi-house-door-fill" style="margin-right: 6px"></i> Halaman
+        Utama
+      </button>
+    </div>
+    <div
+      id="filter-container"
+      style="
+        position: absolute;
+        top: 70px;
+        right: 10px;
+        z-index: 999;
+        background: white;
+        padding: 6px;
+        border-radius: 8px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+      "
+    >
+      <label for="provFilter"><b>Filter Provinsi:</b></label>
+      <select id="provFilter" onchange="filterByProvinsi(this.value)">
+        <option value="">-- Semua Provinsi --</option>
+        <option value="Banten">Banten</option>
+        <option value="DKI Jakarta">DKI Jakarta</option>
+        <option value="Daerah Istimewa Yogyakarta">DI Yogyakarta</option>
+        <option value="Jawa Barat">Jawa Barat</option>
+        <option value="Jawa Tengah">Jawa Tengah</option>
+        <option value="Jawa Timur">Jawa Timur</option>
+        <!-- Tambahkan provinsi lain di sini -->
+      </select>
+    </div>
+
+    <div id="map"></div>
+    <script src="assets/js/qgis2web_expressions.js"></script>
+    <script src="assets/js/leaflet.js"></script>
+    <script src="assets/js/L.Control.Layers.Tree.min.js"></script>
+    <script src="assets/js/leaflet.rotatedMarker.js"></script>
+    <script src="assets/js/leaflet.pattern.js"></script>
+    <script src="assets/js/leaflet-hash.js"></script>
+    <script src="assets/js/Autolinker.min.js"></script>
+    <script src="assets/js/rbush.min.js"></script>
+    <script src="assets/js/labelgun.min.js"></script>
+    <script src="assets/js/labels.js"></script>
+    <script src="data/Est_ISPU_Mar25_Kecamatan2_1.js"></script>
+    <script src="data/Est_ISPU_Mar25_Provinsi3_2.js"></script>
+    <script src="data/Est_ISPU_Mar25_Kabupaten_3.js"></script>
+    <script>
+      var highlightLayer;
+      function highlightFeature(e) {
+        highlightLayer = e.target;
+
+        if (
+          e.target.feature.geometry.type === "LineString" ||
+          e.target.feature.geometry.type === "MultiLineString"
+        ) {
+          highlightLayer.setStyle({
+            color: "#ffff00",
+          });
+        } else {
+          highlightLayer.setStyle({
+            fillColor: "#ffff00",
+            fillOpacity: 1,
+          });
+        }
+      }
+      var map = L.map("map", {
+        zoomControl: false,
+        maxZoom: 28,
+        minZoom: 1,
+      }).fitBounds([
+        [-12.065865826280724, 102.64726184879756],
+        [-2.2929290135845797, 118.28396074911139],
+      ]);
+      var hash = new L.Hash(map);
+      map.attributionControl.setPrefix(
+        '<a href="https://github.com/tomchadwin/qgis2web" target="_blank">qgis2web</a> &middot; <a href="https://leafletjs.com" title="A JS library for interactive maps">Leaflet</a> &middot; <a href="https://qgis.org">QGIS</a>'
+      );
+      var autolinker = new Autolinker({
+        truncate: { length: 30, location: "smart" },
+      });
+      // remove popup's row if "visible-with-data"
+      function removeEmptyRowsFromPopupContent(content, feature) {
+        var tempDiv = document.createElement("div");
+        tempDiv.innerHTML = content;
+        var rows = tempDiv.querySelectorAll("tr");
+        for (var i = 0; i < rows.length; i++) {
+          var td = rows[i].querySelector("td.visible-with-data");
+          var key = td ? td.id : "";
+          if (
+            td &&
+            td.classList.contains("visible-with-data") &&
+            feature.properties[key] == null
+          ) {
+            rows[i].parentNode.removeChild(rows[i]);
+          }
+        }
+        return tempDiv.innerHTML;
+      }
+      // add class to format popup if it contains media
+      function addClassToPopupIfMedia(content, popup) {
+        var tempDiv = document.createElement("div");
+        tempDiv.innerHTML = content;
+        if (tempDiv.querySelector("td img")) {
+          popup._contentNode.classList.add("media");
+          // Delay to force the redraw
+          setTimeout(function () {
+            popup.update();
+          }, 10);
+        } else {
+          popup._contentNode.classList.remove("media");
+        }
+      }
+      var title = new L.Control({ position: "topright" });
+      title.onAdd = function (map) {
+        this._div = L.DomUtil.create("div", "info");
+        this.update();
+        return this._div;
+      };
+      title.update = function () {
+        this._div.innerHTML =
+          "<h2>Peta Estimasi Indeks Standar Pencemar Udara PM2.5 (Maret 2025)</h2>";
+      };
+      title.addTo(map);
+      var abstract = new L.Control({ position: "topright" });
+      abstract.onAdd = function (map) {
+        this._div = L.DomUtil.create("div", "leaflet-control abstract");
+        this._div.id = "abstract";
+        this._div.setAttribute("onmouseenter", "abstract.show()");
+        this._div.setAttribute("onmouseleave", "abstract.hide()");
+        this.hide();
+        return this._div;
+      };
+      abstract.hide = function () {
+        this._div.classList.remove("abstractUncollapsed");
+        this._div.classList.add("abstract");
+        this._div.innerHTML = "i";
+      };
+      abstract.show = function () {
+        this._div.classList.remove("abstract");
+        this._div.classList.add("abstractUncollapsed");
+        this._div.innerHTML = `
+                    <div style="max-width: 800px; font-size: 12px; text-align: justify;">
+                    <p style="margin-bottom: 8px;">
+                        <b>Indeks Standar Pencemar Udara (ISPU)</b> merupakan angka tanpa satuan, digunakan untuk menggambarkan kondisi mutu udara ambien di lokasi tertentu dan didasarkan pada dampak terhadap kesehatan manusia, estetika, serta makhluk hidup lainnya. Informasi ini berguna sebagai <i>early warning system</i> di daerah rawan kebakaran hutan/lahan, dan sebagai bahan pertimbangan kebijakan pengendalian pencemaran udara.
+                    </p>
+                    <hr style="margin: 6px 0;" />
+                    <b>Kategori ISPU:</b>
+                    <table style="margin-top: 5px; border-spacing: 8px 6px;">
+                        <tr>
+                        <td>
+                            <div style="width: 15px; height: 15px; background-color: #006400; border: 1px solid #000;"></div>
+                        </td>
+                        <td><b>0–50: Baik</b><br><span style="font-size: 11px;">Tingkat kualitas Udara yang sangat baik, tidak memberikan efek negative terhadap manusia, hewan, tumbuhan</span></td>
+                        </tr>
+                        <tr>
+                        <td>
+                            <div style="width: 15px; height: 15px; background-color: #00008B; border: 1px solid #000;"></div>
+                        </td>
+                        <td><b>51–100: Sedang</b><br><span style="font-size: 11px;">Tingkat kualitas Udara masih dapat diterima pada Kesehatan manusia, hewan dan tumbuhan</span></td>
+                        </tr>
+                        <tr>
+                        <td>
+                            <div style="width: 15px; height: 15px; background-color: #B8860B; border: 1px solid #000;"></div>
+                        </td>
+                        <td><b>101–200: Tidak Sehat</b><br><span style="font-size: 11px;">Tingkat kualitas udara yang bersifat merugikan pada manusia, hewan dan tumbuhan.</span></td>
+                        </tr>
+                        <tr>
+                        <td>
+                            <div style="width: 15px; height: 15px; background-color: #8B0000; border: 1px solid #000;"></div>
+                        </td>
+                        <td><b>201–300: Sangat Tidak Sehat</b><br><span style="font-size: 11px;">Tingkat kualitas udarayang dapat meningkatkan resiko kesehatan pada sejumlah segmen populasi yang terpapar.</span></td>
+                        </tr>
+                        <tr>
+                        <td>
+                            <div style="width: 15px; height: 15px; background-color: #000000; border: 1px solid #000;"></div>
+                        </td>
+                        <td><b>>301: Berbahaya</b><br><span style="font-size: 11px;">Tingkat kualitas udara yang dapat merugikan kesehatan serius pada populasi dan perlu penanganan cepat.</span></td>
+                        </tr>
+                    </table>
+                    </div>
+                `;
+      };
+      abstract.addTo(map);
+      var zoomControl = L.control
+        .zoom({
+          position: "topleft",
+        })
+        .addTo(map);
+      var bounds_group = new L.featureGroup([]);
+      function setBounds() {}
+      map.createPane("pane_OSMStandard_0");
+      map.getPane("pane_OSMStandard_0").style.zIndex = 400;
+      var layer_OSMStandard_0 = L.tileLayer(
+        "http://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        {
+          pane: "pane_OSMStandard_0",
+          opacity: 1.0,
+          attribution:
+            '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors, CC-BY-SA</a>',
+          minZoom: 1,
+          maxZoom: 28,
+          minNativeZoom: 0,
+          maxNativeZoom: 19,
+        }
+      );
+      layer_OSMStandard_0;
+      map.addLayer(layer_OSMStandard_0);
+      function pop_Est_ISPU_Mar25_Kecamatan2_1(feature, layer) {
+        layer.on({
+          mouseout: function (e) {
+            for (var i in e.target._eventParents) {
+              if (typeof e.target._eventParents[i].resetStyle === "function") {
+                e.target._eventParents[i].resetStyle(e.target);
+              }
+            }
+          },
+          mouseover: highlightFeature,
+        });
+        var popupContent =
+          '<table>\
+                    <tr>\
+                        <th scope="row">Provinsi</th>\
+                        <td>' +
+          (feature.properties["WADMPR"] !== null
+            ? autolinker.link(
+                String(feature.properties["WADMPR"])
+                  .replace(/'/g, "'")
+                  .toLocaleString()
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Kabupaten</th>\
+                        <td>' +
+          (feature.properties["WADMKK"] !== null
+            ? autolinker.link(
+                String(feature.properties["WADMKK"])
+                  .replace(/'/g, "'")
+                  .toLocaleString()
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Kecamatan</th>\
+                        <td>' +
+          (feature.properties["WADMKC"] !== null
+            ? autolinker.link(
+                String(feature.properties["WADMKC"])
+                  .replace(/'/g, "'")
+                  .toLocaleString()
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">ISPU</th>\
+                        <td>' +
+          (feature.properties[".Prediksi_"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Prediksi_"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 1, maximumFractionDigits: 1 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Kategori ISPU</th>\
+                        <td>' +
+          (feature.properties[".Kategori"] !== null
+            ? autolinker.link(
+                String(feature.properties[".Kategori"])
+                  .replace(/'/g, "'")
+                  .toLocaleString()
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Jarak PLTU Terdekat (Km)</th>\
+                        <td>' +
+          (feature.properties[".Jarak_PLT"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Jarak_PLT"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 1, maximumFractionDigits: 1 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Jumlah PLTU (100km)</th>\
+                        <td>' +
+          (feature.properties[".Density_P"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Density_P"]).toLocaleString(
+                  undefined,
+                  { maximumFractionDigits: 0 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">AOD</th>\
+                        <td>' +
+          (feature.properties[".AOD"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".AOD"]).toLocaleString(undefined, {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                })
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Suhu (C)</th>\
+                        <td>' +
+          (feature.properties[".Suhu"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Suhu"]).toLocaleString(undefined, {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                })
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Curah Hujan Total (m)</th>\
+                        <td>' +
+          (feature.properties[".CurahHuja"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".CurahHuja"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 3, maximumFractionDigits: 3 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Kecepatan Angin Timur-Barat (m/s)</th>\
+                        <td>' +
+          (feature.properties[".U_WindSpe"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".U_WindSpe"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 3, maximumFractionDigits: 3 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Kecepatan Angin Utara-Selatan (m/s)</th>\
+                        <td>' +
+          (feature.properties[".V_WindSpe"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".V_WindSpe"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 3, maximumFractionDigits: 3 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Tekanan Permukaan (Pa)</th>\
+                        <td>' +
+          (feature.properties[".Surface_P"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Surface_P"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 1, maximumFractionDigits: 1 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">LAI High</th>\
+                        <td>' +
+          (feature.properties[".LAI_High"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".LAI_High"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 1, maximumFractionDigits: 1 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">LAI Low</th>\
+                        <td>' +
+          (feature.properties[".LAI_Low"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".LAI_Low"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 1, maximumFractionDigits: 1 }
+                )
+              )
+            : "") +
+          "</td>\
+                    </tr>\
+                </table>";
+        var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+        layer.on("popupopen", function (e) {
+          addClassToPopupIfMedia(content, e.popup);
+        });
+        layer.bindPopup(content, { maxHeight: 400 });
+      }
+
+      function style_Est_ISPU_Mar25_Kecamatan2_1_0(feature) {
+        if (
+          feature.properties[".Prediksi_"] >= 0.0 &&
+          feature.properties[".Prediksi_"] <= 20.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(247,252,245,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".Prediksi_"] >= 20.0 &&
+          feature.properties[".Prediksi_"] <= 25.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(233,247,229,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".Prediksi_"] >= 25.0 &&
+          feature.properties[".Prediksi_"] <= 30.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(213,239,207,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".Prediksi_"] >= 30.0 &&
+          feature.properties[".Prediksi_"] <= 35.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(187,228,181,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".Prediksi_"] >= 35.0 &&
+          feature.properties[".Prediksi_"] <= 40.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(158,215,152,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".Prediksi_"] >= 40.0 &&
+          feature.properties[".Prediksi_"] <= 45.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(123,199,124,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".Prediksi_"] >= 45.0 &&
+          feature.properties[".Prediksi_"] <= 50.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(85,181,103,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".Prediksi_"] >= 50.0 &&
+          feature.properties[".Prediksi_"] <= 55.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(96,152,255,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".Prediksi_"] >= 55.0 &&
+          feature.properties[".Prediksi_"] <= 60.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(77,106,234,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".Prediksi_"] >= 60.0 &&
+          feature.properties[".Prediksi_"] <= 65.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(69,66,209,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".Prediksi_"] >= 65.0 &&
+          feature.properties[".Prediksi_"] <= 70.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(38,54,169,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".Prediksi_"] >= 70.0 &&
+          feature.properties[".Prediksi_"] <= 75.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(18,32,138,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".Prediksi_"] >= 75.0 &&
+          feature.properties[".Prediksi_"] <= 80.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(9,5,118,1.0)",
+            interactive: true,
+          };
+        }
+      }
+      map.createPane("pane_Est_ISPU_Mar25_Kecamatan2_1");
+      map.getPane("pane_Est_ISPU_Mar25_Kecamatan2_1").style.zIndex = 401;
+      map.getPane("pane_Est_ISPU_Mar25_Kecamatan2_1").style["mix-blend-mode"] =
+        "normal";
+      var layer_Est_ISPU_Mar25_Kecamatan2_1 = new L.geoJson(
+        json_Est_ISPU_Mar25_Kecamatan2_1,
+        {
+          attribution: "",
+          interactive: true,
+          dataVar: "json_Est_ISPU_Mar25_Kecamatan2_1",
+          layerName: "layer_Est_ISPU_Mar25_Kecamatan2_1",
+          pane: "pane_Est_ISPU_Mar25_Kecamatan2_1",
+          onEachFeature: pop_Est_ISPU_Mar25_Kecamatan2_1,
+          style: style_Est_ISPU_Mar25_Kecamatan2_1_0,
+        }
+      );
+      bounds_group.addLayer(layer_Est_ISPU_Mar25_Kecamatan2_1);
+      //map.addLayer(layer_Est_ISPU_Mar25_Kecamatan2_1);
+
+      function pop_Est_ISPU_Mar25_Kabupaten_3(feature, layer) {
+        layer.on({
+          mouseout: function (e) {
+            for (var i in e.target._eventParents) {
+              if (typeof e.target._eventParents[i].resetStyle === "function") {
+                e.target._eventParents[i].resetStyle(e.target);
+              }
+            }
+          },
+          mouseover: highlightFeature,
+        });
+        var popupContent =
+          '<table>\
+                    <tr>\
+                        <th scope="row">Provinsi</th>\
+                        <td>' +
+          (feature.properties["WADMPR"] !== null
+            ? autolinker.link(
+                String(feature.properties["WADMPR"])
+                  .replace(/'/g, "'")
+                  .toLocaleString()
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Kabupaten/Kota</th>\
+                        <td>' +
+          (feature.properties["WADMKK"] !== null
+            ? autolinker.link(
+                String(feature.properties["WADMKK"])
+                  .replace(/'/g, "'")
+                  .toLocaleString()
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">ISPU</th>\
+                        <td>' +
+          (feature.properties[".ISPU"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".ISPU"]).toLocaleString(undefined, {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                })
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Kategori ISPU</th>\
+                        <td>' +
+          (feature.properties[".Kategori"] !== null
+            ? autolinker.link(
+                String(feature.properties[".Kategori"])
+                  .replace(/'/g, "'")
+                  .toLocaleString()
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Jumlah PLTU (100km)</th>\
+                        <td>' +
+          (feature.properties[".Density_P"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Density_P"]).toFixed(0)
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Jarak PLTU terdekat (Km)</th>\
+                        <td>' +
+          (feature.properties[".Jarak_Plt"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Jarak_Plt"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 1, maximumFractionDigits: 1 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">AOD</th>\
+                        <td>' +
+          (feature.properties[".AOD"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".AOD"]).toLocaleString(undefined, {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                })
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Suhu (C)</th>\
+                        <td>' +
+          (feature.properties[".Suhu (C)"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Suhu (C)"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 1, maximumFractionDigits: 1 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Curah Hujan Total (m/s)</th>\
+                        <td>' +
+          (feature.properties[".CurahHuja"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".CurahHuja"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 3, maximumFractionDigits: 3 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Kecepatan Angin Barat-Timur (m/s)</th>\
+                        <td>' +
+          (feature.properties[".U_WindSpe"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".U_WindSpe"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 3, maximumFractionDigits: 3 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Kecepatan Angin Utara-Selatan (m/s)</th>\
+                        <td class="visible-with-data" id=".V_WindSpe">' +
+          (feature.properties[".V_WindSpe"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".V_WindSpe"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 3, maximumFractionDigits: 3 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Tekanan permukaan (Pa)</th>\
+                        <td>' +
+          (feature.properties[".Surface_P"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Surface_P"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">LAI High</th>\
+                        <td>' +
+          (feature.properties[".LAI_High"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".LAI_High"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">LAI Low</th>\
+                        <td class="visible-with-data" id=".LAI_Low">' +
+          (feature.properties[".LAI_Low"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".LAI_Low"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                )
+              )
+            : "") +
+          "</td>\
+                    </tr>\
+                </table>";
+        var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+        layer.on("popupopen", function (e) {
+          addClassToPopupIfMedia(content, e.popup);
+        });
+        layer.bindPopup(content, { maxHeight: 400 });
+      }
+
+      function style_Est_ISPU_Mar25_Kabupaten_3_0(feature) {
+        if (
+          feature.properties[".ISPU"] >= 20.0 &&
+          feature.properties[".ISPU"] <= 25.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kabupaten_3",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(247,252,245,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 25.0 &&
+          feature.properties[".ISPU"] <= 30.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kabupaten_3",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(204,247,199,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 30.0 &&
+          feature.properties[".ISPU"] <= 35.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kabupaten_3",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(169,224,162,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 35.0 &&
+          feature.properties[".ISPU"] <= 40.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kabupaten_3",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(147,179,142,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 40.0 &&
+          feature.properties[".ISPU"] <= 45.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kabupaten_3",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(109,148,104,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 45.0 &&
+          feature.properties[".ISPU"] <= 50.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kabupaten_3",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(74,120,74,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 50.0 &&
+          feature.properties[".ISPU"] <= 55.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kabupaten_3",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(106,147,250,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 55.0 &&
+          feature.properties[".ISPU"] <= 60.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kabupaten_3",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(71,101,217,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 60.0 &&
+          feature.properties[".ISPU"] <= 65.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kabupaten_3",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(55,60,196,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 65.0 &&
+          feature.properties[".ISPU"] <= 70.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kabupaten_3",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(27,39,170,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 70.0 &&
+          feature.properties[".ISPU"] <= 75.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Kabupaten_3",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(8,4,129,1.0)",
+            interactive: true,
+          };
+        }
+      }
+      map.createPane("pane_Est_ISPU_Mar25_Kabupaten_3");
+      map.getPane("pane_Est_ISPU_Mar25_Kabupaten_3").style.zIndex = 402;
+      map.getPane("pane_Est_ISPU_Mar25_Kabupaten_3").style["mix-blend-mode"] =
+        "normal";
+
+      var layer_Est_ISPU_Mar25_Kabupaten_3 = new L.geoJson(
+        json_Est_ISPU_Mar25_Kabupaten_3,
+        {
+          attribution: "",
+          interactive: true,
+          dataVar: "json_Est_ISPU_Mar25_Kabupaten_3",
+          layerName: "layer_Est_ISPU_Mar25_Kabupaten_3",
+          pane: "pane_Est_ISPU_Mar25_Kabupaten_3",
+          onEachFeature: pop_Est_ISPU_Mar25_Kabupaten_3,
+          style: style_Est_ISPU_Mar25_Kabupaten_3_0,
+        }
+      );
+      bounds_group.addLayer(layer_Est_ISPU_Mar25_Kabupaten_3);
+      map.addLayer(layer_Est_ISPU_Mar25_Kabupaten_3);
+
+      function pop_Est_ISPU_Mar25_Provinsi3_2(feature, layer) {
+        layer.on({
+          mouseout: function (e) {
+            for (var i in e.target._eventParents) {
+              if (typeof e.target._eventParents[i].resetStyle === "function") {
+                e.target._eventParents[i].resetStyle(e.target);
+              }
+            }
+          },
+          mouseover: highlightFeature,
+        });
+        var popupContent =
+          '<table>\
+                    <tr>\
+                        <th scope="row">Provinsi</th>\
+                        <td>' +
+          (feature.properties["WADMPR"] !== null
+            ? autolinker.link(
+                String(feature.properties["WADMPR"])
+                  .replace(/'/g, "'")
+                  .toLocaleString()
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">ISPU</th>\
+                        <td>' +
+          (feature.properties[".ISPU"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".ISPU"]).toLocaleString(undefined, {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                })
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Jarak PLTU Terdekat (Km)</th>\
+                        <td>' +
+          (feature.properties[".Jarak_Plt"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Jarak_Plt"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 1, maximumFractionDigits: 1 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Jumlah PLTU (100Km)</th>\
+                        <td>' +
+          (feature.properties[".Density_P"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Density_P"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">AOD</th>\
+                        <td>' +
+          (feature.properties[".AOD"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".AOD"]).toLocaleString(undefined, {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                })
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Suhu (C)</th>\
+                        <td>' +
+          (feature.properties[".Suhu (C)"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Suhu (C)"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 1, maximumFractionDigits: 1 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Curah Hujan Total (m/s)</th>\
+                        <td>' +
+          (feature.properties[".CurahHuja"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".CurahHuja"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 3, maximumFractionDigits: 3 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Kecepatan Angin Timur-Barat (m/s)</th>\
+                        <td>' +
+          (feature.properties[".U_WindSpe"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".U_WindSpe"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 3, maximumFractionDigits: 3 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Kecepatan Angin Utara-Selatan (m/s)</th>\
+                        <td>' +
+          (feature.properties[".V_WindSpe"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".V_WindSpe"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 3, maximumFractionDigits: 3 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Tekanan Permukaan (Pa)</th>\
+                        <td>' +
+          (feature.properties[".Surface_P"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".Surface_P"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">LAI_High</th>\
+                        <td>' +
+          (feature.properties[".LAI_High"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".LAI_High"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                )
+              )
+            : "") +
+          '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">LAI_Low</th>\
+                        <td>' +
+          (feature.properties[".LAI_Low"] !== null
+            ? autolinker.link(
+                Number(feature.properties[".LAI_Low"]).toLocaleString(
+                  undefined,
+                  { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                )
+              )
+            : "") +
+          "</td>\
+                    </tr>\
+                </table>";
+        var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+        layer.on("popupopen", function (e) {
+          addClassToPopupIfMedia(content, e.popup);
+        });
+        layer.bindPopup(content, { maxHeight: 400 });
+      }
+
+      function style_Est_ISPU_Mar25_Provinsi3_2_0(feature) {
+        if (
+          feature.properties[".ISPU"] >= 52.298338 &&
+          feature.properties[".ISPU"] <= 52.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Provinsi3_2",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(255,255,255,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 52.0 &&
+          feature.properties[".ISPU"] <= 54.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Provinsi3_2",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(211,213,255,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 54.0 &&
+          feature.properties[".ISPU"] <= 56.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Provinsi3_2",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(198,199,255,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 56.0 &&
+          feature.properties[".ISPU"] <= 58.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Provinsi3_2",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(113,115,237,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 58.0 &&
+          feature.properties[".ISPU"] <= 60.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Provinsi3_2",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(74,77,218,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 60.0 &&
+          feature.properties[".ISPU"] <= 62.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Provinsi3_2",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(41,44,188,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 62.0 &&
+          feature.properties[".ISPU"] <= 64.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Provinsi3_2",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(35,37,158,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 64.0 &&
+          feature.properties[".ISPU"] <= 66.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Provinsi3_2",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(27,28,120,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 66.0 &&
+          feature.properties[".ISPU"] <= 68.0
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Provinsi3_2",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(20,21,90,1.0)",
+            interactive: true,
+          };
+        }
+        if (
+          feature.properties[".ISPU"] >= 68.0 &&
+          feature.properties[".ISPU"] <= 66.028547
+        ) {
+          return {
+            pane: "pane_Est_ISPU_Mar25_Provinsi3_2",
+            opacity: 1,
+            color: "rgba(35,35,35,1.0)",
+            dashArray: "",
+            lineCap: "butt",
+            lineJoin: "miter",
+            weight: 1.0,
+            fill: true,
+            fillOpacity: 1,
+            fillColor: "rgba(0,4,255,1.0)",
+            interactive: true,
+          };
+        }
+      }
+      map.createPane("pane_Est_ISPU_Mar25_Provinsi3_2");
+      map.getPane("pane_Est_ISPU_Mar25_Provinsi3_2").style.zIndex = 403;
+      map.getPane("pane_Est_ISPU_Mar25_Provinsi3_2").style["mix-blend-mode"] =
+        "normal";
+      var layer_Est_ISPU_Mar25_Provinsi3_2 = new L.geoJson(
+        json_Est_ISPU_Mar25_Provinsi3_2,
+        {
+          attribution: "",
+          interactive: true,
+          dataVar: "json_Est_ISPU_Mar25_Provinsi3_2",
+          layerName: "layer_Est_ISPU_Mar25_Provinsi3_2",
+          pane: "pane_Est_ISPU_Mar25_Provinsi3_2",
+          onEachFeature: pop_Est_ISPU_Mar25_Provinsi3_2,
+          style: style_Est_ISPU_Mar25_Provinsi3_2_0,
+        }
+      );
+      bounds_group.addLayer(layer_Est_ISPU_Mar25_Provinsi3_2);
+      //map.addLayer(layer_Est_ISPU_Mar25_Provinsi3_2);
+      var baseLayersTree = [
+        {
+          label: `<b>Provinsi (Maret 2025)</b><br/>`,
+          layer: layer_Est_ISPU_Mar25_Provinsi3_2,
+        },
+        {
+          label: `<b>Kabupaten (Maret 2025)</b>`,
+          layer: layer_Est_ISPU_Mar25_Kabupaten_3,
+        },
+        {
+          label: `<b>Kecamatan (Maret 2025)</b>`,
+          layer: layer_Est_ISPU_Mar25_Kecamatan2_1,
+        },
+      ];
+
+      var overlaysTree = [
+        {
+          label: `<b>Peta Global</b>`,
+          layer: layer_OSMStandard_0,
+        },
+      ];
+
+      var lay = L.control.layers.tree(baseLayersTree, overlaysTree, {
+        collapsed: true,
+        namedToggle: false, // Optional: biar tampil lebih simpel
+        selectorBack: false, // Optional: sembunyikan panah kembali
+      });
+      lay.addTo(map);
+      setBounds();
+
+      function filterByProvinsi(namaProvinsi) {
+        // Filter Layer Kecamatan
+        layer_Est_ISPU_Mar25_Kecamatan2_1.eachLayer(function (layer) {
+          var props = layer.feature.properties;
+          var cocok = !namaProvinsi || props["WADMPR"] === namaProvinsi;
+
+          layer.setStyle({
+            fillOpacity: cocok ? 1 : 0,
+            opacity: cocok ? 1 : 0,
+          });
+        });
+
+        // Filter Layer Kabupaten
+        layer_Est_ISPU_Mar25_Kabupaten_3.eachLayer(function (layer) {
+          var props = layer.feature.properties;
+          var cocok = !namaProvinsi || props["WADMPR"] === namaProvinsi;
+
+          layer.setStyle({
+            fillOpacity: cocok ? 1 : 0,
+            opacity: cocok ? 1 : 0,
+          });
+        });
+
+        // Filter Layer Provinsi
+        layer_Est_ISPU_Mar25_Provinsi3_2.eachLayer(function (layer) {
+          var props = layer.feature.properties;
+          var cocok = !namaProvinsi || props["WADMPR"] === namaProvinsi;
+
+          layer.setStyle({
+            fillOpacity: cocok ? 1 : 0,
+            opacity: cocok ? 1 : 0,
+          });
+        });
+      }
+    </script>
+  </body>
+  /
+</html>
